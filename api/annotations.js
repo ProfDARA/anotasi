@@ -1,19 +1,12 @@
-const { timingSafeEqual } = require('node:crypto');
 const { neon } = require('@neondatabase/serverless');
 
 const DATASET_ID = 'UNTIDAR-RRE100-20261122';
-const ID_PATTERN = /^[A-Z0-9_-]{2,32}$/;
+const RATER_ORDER = ['R01', 'R02'];
 
 function send(res, status, payload) {
   res.status(status).setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store');
   res.end(JSON.stringify(payload));
-}
-
-function safeEqual(a, b) {
-  const left = Buffer.from(String(a));
-  const right = Buffer.from(String(b));
-  return left.length === right.length && timingSafeEqual(left, right);
 }
 
 module.exports = async function handler(req, res) {
@@ -25,20 +18,8 @@ module.exports = async function handler(req, res) {
   const url = new URL(req.url, `https://${req.headers.host || 'localhost'}`);
   const dataset = url.searchParams.get('dataset');
   const rater = (url.searchParams.get('rater') || '').toUpperCase();
-  if (dataset !== DATASET_ID || !ID_PATTERN.test(rater)) {
+  if (dataset !== DATASET_ID || !RATER_ORDER.includes(rater)) {
     return send(res, 400, { error: 'Dataset atau ID rater tidak valid.' });
-  }
-
-  let raterTokens;
-  try {
-    raterTokens = JSON.parse(process.env.RATER_TOKENS || '{}');
-  } catch {
-    return send(res, 500, { error: 'Konfigurasi RATER_TOKENS bukan JSON yang valid.' });
-  }
-  const supplied = (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-  const expected = raterTokens[rater];
-  if (typeof expected !== 'string' || expected.length < 24 || !safeEqual(supplied, expected)) {
-    return send(res, 401, { error: 'ID rater atau token akses salah.' });
   }
 
   const connectionString = process.env.POSTGRES_URL || process.env.DATABASE_URL;
@@ -56,9 +37,8 @@ module.exports = async function handler(req, res) {
       PRIMARY KEY (dataset_id, rater_id)
     )`;
 
-    const raterOrder = Object.keys(raterTokens).map((id) => id.toUpperCase());
-    const raterIndex = raterOrder.indexOf(rater);
-    for (const priorRater of raterOrder.slice(0, raterIndex)) {
+    const raterIndex = RATER_ORDER.indexOf(rater);
+    for (const priorRater of RATER_ORDER.slice(0, raterIndex)) {
       const priorRows = await sql`SELECT state FROM rre100_annotations
         WHERE dataset_id = ${dataset} AND rater_id = ${priorRater} LIMIT 1`;
       const priorState = priorRows[0]?.state;
